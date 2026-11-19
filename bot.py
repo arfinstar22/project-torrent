@@ -955,8 +955,9 @@ async def _on_document(client: Client, message: Message) -> None:
         return
 
     size = message.document.file_size or 0
-    if size > config.MAX_UPLOAD_MB * 1024 * 1024:
-        await message.reply(f"❌ {html.escape(raw_name)} terlalu besar ({_human(size)}).")
+    max_input = 4000 * 1024 * 1024 if Path(name).suffix in (".mp4", ".mkv", ".avi", ".mov", ".webm", ".ts") else config.MAX_UPLOAD_MB * 1024 * 1024
+    if size > max_input:
+        await message.reply(f"❌ {html.escape(raw_name)} terlalu besar ({_human(size)}). Maksimal 4 GB.")
         return
 
     await _reupload_media(client, message, raw_name)
@@ -973,8 +974,8 @@ async def _on_video(client: Client, message: Message) -> None:
         raw_name += ".mp4"
 
     size = message.video.file_size or 0
-    if size > config.MAX_UPLOAD_MB * 1024 * 1024:
-        await message.reply(f"❌ {html.escape(raw_name)} terlalu besar ({_human(size)}).")
+    if size > 4000 * 1024 * 1024:
+        await message.reply(f"❌ {html.escape(raw_name)} terlalu besar ({_human(size)}). Maksimal 4 GB.")
         return
 
     await _reupload_media(client, message, raw_name)
