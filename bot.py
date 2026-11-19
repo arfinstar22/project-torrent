@@ -962,6 +962,24 @@ async def _on_document(client: Client, message: Message) -> None:
     await _reupload_media(client, message, raw_name)
 
 
+@app.on_message(filters.video)
+async def _on_video(client: Client, message: Message) -> None:
+    raw_name = message.video.file_name or ""
+    if not raw_name and message.caption:
+        raw_name = message.caption.splitlines()[0].strip()
+    if not raw_name:
+        raw_name = f"video_{message.id}.mp4"
+    if not Path(raw_name).suffix:
+        raw_name += ".mp4"
+
+    size = message.video.file_size or 0
+    if size > config.MAX_UPLOAD_MB * 1024 * 1024:
+        await message.reply(f"❌ {html.escape(raw_name)} terlalu besar ({_human(size)}).")
+        return
+
+    await _reupload_media(client, message, raw_name)
+
+
 @app.on_message(filters.text & ~filters.regex(r"^/"))
 async def _on_text(client: Client, message: Message) -> None:
     text = message.text.strip()
