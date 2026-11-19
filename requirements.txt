@@ -4,3 +4,4 @@ gdown==6.5.1
 libtorrent==2.1.1
 Pillow==11.3.0
 python-dotenv==1.2.4
+yt-dlp>=2024.10.0

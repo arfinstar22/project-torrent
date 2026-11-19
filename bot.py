@@ -31,26 +31,30 @@ import config
 import downloaders
 
 MENU_TEXT = (
-    "🤖 <b>Bot Unduh &amp; Unggah</b>\n\n"
+    "🤖 <b>Bot Unduh &amp; Unggah Super</b>\n\n"
     "Kirim ke chat ini:\n"
-    "• Link Google Drive publik (file atau folder)\n"
-    "• Link <code>magnet:?xt=...</code>\n"
-    "• File <code>.torrent</code>\n\n"
-    "Video, audio, gambar, dan GIF dikirim sebagai <b>media</b> dengan cover\n"
-    "ber-watermark. File media yang kamu kirim sebagai dokumen otomatis\n"
-    "diunggah ulang jadi media. Maksimal 2 GB per file."
+    "• <b>Google Drive</b> (file / folder publik)\n"
+    "• <b>TeraBox, MediaFire, Pixeldrain, GoFile</b>\n"
+    "• <b>Link Langsung HTTP/HTTPS</b> (video, zip, file apapun)\n"
+    "• <b>YouTube, TikTok (no watermark), Reels, Twitter/X, FB</b>\n"
+    "• <b>Torrent</b> (link magnet / file <code>.torrent</code>)\n\n"
+    "⚡ <b>Kecepatan:</b> Multi-koneksi aria2c (16 stream paralel).\n"
+    "🎬 <b>Cover:</b> Poster landscape resmi (TMDB) + watermark otomatis.\n"
+    "✂️ <b>Ukuran:</b> Video &gt; 2 GB otomatis dipotong rapi per part."
 )
 
 HELP_TEXT = (
     "📥 <b>Cara pakai</b>\n\n"
-    "1. Salin link Google Drive dengan akses \"Anyone with the link\".\n"
-    "2. Kirim link ke bot, atau kirim file <code>.torrent</code> / link magnet.\n"
-    "3. File media (video/audio/gambar) boleh dikirim sebagai dokumen; bot\n"
-    "   mengunggah ulang sebagai media dengan cover ber-watermark.\n"
-    "4. Bot menampilkan progress unduh dan unggah.\n"
-    "5. File diterima di chat ini, unduhan sementara dihapus.\n\n"
-    "Banyak file dalam satu torrent digabung jadi satu <code>.zip</code>.\n"
-    "Cover video/GIF bisa diatur di menu 🖌 Watermark."
+    "1. Kirim link apapun ke bot ini:\n"
+    "   • Google Drive publik (file atau folder)\n"
+    "   • TeraBox, MediaFire, Pixeldrain, GoFile\n"
+    "   • Link langsung unduhan (URL file .mp4, .mkv, .zip, dll.)\n"
+    "   • Link video sosial media (YouTube, TikTok, Instagram, dll.)\n"
+    "   • Link magnet atau file <code>.torrent</code>\n"
+    "2. Bot otomatis mengunduh dengan multi-koneksi kecepatan tinggi.\n"
+    "3. Film/video otomatis diberi cover landscape resmi TMDB ber-watermark.\n"
+    "4. Video &gt; 2 GB otomatis dipecah menjadi beberapa bagian (Part 1, Part 2).\n"
+    "5. File diterima di chat ini, unduhan sementara langsung dihapus dari disk."
 )
 
 LIMITS_TEXT = (
@@ -779,6 +783,36 @@ async def _handle_torrent(client: Client, message: Message, source: str) -> None
     await _enqueue(message.chat.id, message, "torrent", job)
 
 
+async def _handle_direct_download(
+    client: Client, message: Message, name: str, download_fn
+) -> None:
+    async def job(status):
+        progress = _Progress(status, f"⬇️ Mengunduh dari {name}")
+        prefix = f"{name.lower().replace(' ', '_')}_"
+        workdir = Path(tempfile.mkdtemp(prefix=prefix, dir=config.DOWNLOAD_DIR))
+        try:
+            state = {"current": 0, "total": 0, "detail": "menghubungi server..."}
+
+            def on_progress(current, total, detail="mengunduh..."):
+                state.update(current=current or 0, total=total or 0, detail=detail)
+
+            loop = asyncio.get_running_loop()
+            task = loop.run_in_executor(None, download_fn, workdir, on_progress)
+            while not task.done():
+                await asyncio.sleep(1)
+                await progress.update(state["current"], state["total"], state["detail"])
+
+            result = task.result()
+            paths = result if isinstance(result, list) else [result]
+            progress.set_label(f"📤 Mengunggah {len(paths)} file")
+            await _deliver(client, message, paths, progress, workdir)
+            await progress.finish(f"✅ Selesai: {len(paths)} file terkirim")
+        finally:
+            shutil.rmtree(workdir, ignore_errors=True)
+
+    await _enqueue(message.chat.id, message, name, job)
+
+
 app = Client(
     "projectTorrent",
     api_id=config.API_ID,
@@ -948,10 +982,86 @@ async def _on_text(client: Client, message: Message) -> None:
         )
         return
 
-    if "drive.google.com" in text:
+    lower = text.lower()
+    if "drive.google.com" in lower:
         await _handle_gdrive(client, message, text)
     elif text.startswith("magnet:"):
         await _handle_torrent(client, message, text)
+    elif "mediafire.com" in lower:
+        await _handle_direct_download(
+            client,
+            message,
+            "MediaFire",
+            lambda w, cb: downloaders.download_url(
+                *downloaders.resolve_mediafire(text), dest_dir=w, progress_cb=cb
+            ),
+        )
+    elif "pixeldrain.com" in lower:
+        await _handle_direct_download(
+            client,
+            message,
+            "Pixeldrain",
+            lambda w, cb: downloaders.download_url(
+                *downloaders.resolve_pixeldrain(text), dest_dir=w, progress_cb=cb
+            ),
+        )
+    elif "gofile.io" in lower:
+        await _handle_direct_download(
+            client,
+            message,
+            "GoFile",
+            lambda w, cb: [
+                downloaders.download_url(
+                    u, w, filename=n, headers=h, progress_cb=cb
+                )
+                for u, n, h in downloaders.resolve_gofile(text)
+            ],
+        )
+    elif any(
+        d in lower
+        for d in (
+            "terabox",
+            "1024tera",
+            "teraboxapp",
+            "mirrobox",
+            "4funbox",
+            "nephobox",
+        )
+    ):
+        await _handle_direct_download(
+            client,
+            message,
+            "TeraBox",
+            lambda w, cb: downloaders.download_url(
+                *downloaders.resolve_terabox(text), dest_dir=w, progress_cb=cb
+            ),
+        )
+    elif any(
+        d in lower
+        for d in (
+            "youtube.com",
+            "youtu.be",
+            "tiktok.com",
+            "instagram.com",
+            "twitter.com",
+            "x.com",
+            "facebook.com",
+            "fb.watch",
+        )
+    ):
+        await _handle_direct_download(
+            client,
+            message,
+            "Video",
+            lambda w, cb: downloaders.download_ytdlp(text, w, progress_cb=cb),
+        )
+    elif text.startswith(("http://", "https://")):
+        await _handle_direct_download(
+            client,
+            message,
+            "Direct Link",
+            lambda w, cb: downloaders.download_url(text, w, progress_cb=cb),
+        )
     else:
         await message.reply_text(
             MENU_TEXT, reply_markup=_menu_keyboard(), disable_web_page_preview=True
